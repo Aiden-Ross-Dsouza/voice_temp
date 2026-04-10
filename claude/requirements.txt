@@ -1,0 +1,35 @@
+# IndicF5 Voice Cloning Pipeline — Requirements
+# ───────────────────────────────────────────────
+# Install in order:
+#
+#   1. Create conda env (Python 3.10)
+#      conda create -n indicf5 python=3.10 -y
+#      conda activate indicf5
+#
+#   2. Install PyTorch with CUDA (adjust cuda version as needed)
+#      pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+#
+#   3. Install this requirements file
+#      pip install -r requirements.txt
+#
+#   4. Install IndicF5 from source
+#      pip install git+https://github.com/ai4bharat/IndicF5.git
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+numpy>=1.24
+soundfile>=0.12
+scipy>=1.10
+
+# ── Hugging Face (needed by IndicF5) ─────────────────────────────────────────
+transformers>=4.40
+huggingface_hub>=0.22
+
+# ── Audio resampling & analysis ───────────────────────────────────────────────
+librosa>=0.10
+
+# ── Transcription (choose one) ────────────────────────────────────────────────
+openai-whisper>=20231117        # Full Whisper (GPU recommended)
+# faster-whisper>=0.10          # CPU-friendly alternative (comment out whisper above)
+
+# ── Optional: noise reduction ─────────────────────────────────────────────────
+# noisereduce>=2.0              # Uncomment if using --denoise flag
