@@ -620,7 +620,7 @@ class IndicF5Pipeline:
             Path to the generated audio file.
         """
         log.info("╔══════════════════════════════════════════════════╗")
-        log.info("║     IndicF5 Voice Cloning Pipeline               ║")
+        log.info("║       Indic Voice Cloning Pipeline               ║")
         log.info("╚══════════════════════════════════════════════════╝")
 
         # 1 — Preprocess reference audio
