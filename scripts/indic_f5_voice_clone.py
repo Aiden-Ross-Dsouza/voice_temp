@@ -502,18 +502,63 @@ class IndicF5VoiceCloner:
         log.info("  Target text : %s", target_text[:80] + ("…" if len(target_text) > 80 else ""))
         log.info("  Ref text    : %s", ref_text[:80] + ("…" if len(ref_text) > 80 else ""))
 
-        raw = self.model(
-            target_text,
-            ref_audio_path=ref_audio_path,
-            ref_text=ref_text,
-        )
+        # Chunk the text to handle long generations and avoid truncation
+        import re
+        # Split by Indic and English sentence terminators or newlines
+        parts = re.split(r'([।॥.!?\n]+)', target_text)
+        
+        chunks = []
+        current_chunk = ""
+        # 120 chars is safe for max generation length (~10-12 secs)
+        # combined with ref audio
+        MAX_CHUNK_LEN = 120 
+        
+        for part in parts:
+            if not part:
+                continue
+            if len(current_chunk) + len(part) <= MAX_CHUNK_LEN:
+                current_chunk += part
+            else:
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                current_chunk = part
+                
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
 
-        # IndicF5 returns int16 → convert to float32
-        audio = np.array(raw, dtype=np.float32)
-        if audio.max() > 1.0 or audio.min() < -1.0:
-            audio = audio / 32768.0
+        audio_pieces = []
+        log.info("  Split text into %d chunks to avoid model truncation.", len(chunks))
+        
+        for i, chunk in enumerate(chunks, 1):
+            if not chunk:
+                continue
+            log.info("  Processing chunk %d/%d: %s", i, len(chunks), chunk[:40] + ("..." if len(chunk) > 40 else ""))
+            try:
+                raw = self.model(
+                    chunk,
+                    ref_audio_path=ref_audio_path,
+                    ref_text=ref_text,
+                )
+                
+                # IndicF5 returns int16 → convert to float32
+                chunk_audio = np.array(raw, dtype=np.float32)
+                if chunk_audio.max() > 1.0 or chunk_audio.min() < -1.0:
+                    chunk_audio = chunk_audio / 32768.0
+                    
+                audio_pieces.append(chunk_audio)
+                
+                # Optionally add a tiny 0.2s pause between sentences to prevent clipping
+                pause = np.zeros(int(24000 * 0.2), dtype=np.float32)
+                audio_pieces.append(pause)
+                
+            except Exception as e:
+                log.error("  Error generating chunk %d: %s", i, e)
 
-        log.info("  Synthesis complete — %.2f s of audio", len(audio) / 24_000)
+        if not audio_pieces:
+            raise RuntimeError("Failed to generate any audio. Text might be invalid.")
+
+        audio = np.concatenate(audio_pieces)
+        log.info("  Synthesis complete — %.2f s of audio total", len(audio) / 24_000)
         return audio
 
 
