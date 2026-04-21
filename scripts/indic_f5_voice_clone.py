@@ -282,14 +282,13 @@ class ReferenceTranscriber:
     def transcribe(self, audio_path: str, language: str | None = None) -> str:
         """Return transcript of the reference audio clip."""
         log.info("━━━ STEP 2: Transcribing Reference Audio ━━━")
+        log.info("  (Reference text not provided; initializing Whisper ...)")
         text = self._try_whisper(audio_path, language)
         if text:
             log.info("  Transcript: %s", text)
             return text
         raise RuntimeError(
-            "Transcription failed. Install whisper:\n"
-            "    pip install openai-whisper\n"
-            "Or pass --ref_text explicitly to skip transcription."
+            "Transcription failed. Ensure Whisper is installed or pass --ref_text."
         )
 
     def _try_whisper(self, audio_path: str, language: str | None) -> str | None:
@@ -630,9 +629,9 @@ class IndicF5Pipeline:
         self.preprocessor.process(ref_audio, preprocessed_path)
 
         # 2 — Get reference transcript
-        if ref_text:
-            log.info("━━━ STEP 2: Using provided ref_text ━━━")
-            log.info("  Ref text: %s", ref_text)
+        if ref_text and ref_text.strip():
+            log.info("━━━ STEP 2: Bypassing Transcription ━━━")
+            log.info("  Using provided ref_text: %s", ref_text[:100] + ("..." if len(ref_text) > 100 else ""))
         else:
             ref_text = self.transcriber.transcribe(preprocessed_path, language=language)
 
@@ -866,6 +865,16 @@ def main():
             log.warning(
                 "ref_text appears garbled. Consider using --ref_text_file with a UTF-8 file."
             )
+    else:
+        # AUTO-DETECTION: Check if a .txt file exists next to the .wav file
+        audio_path = Path(args.ref_audio)
+        potential_txt = audio_path.with_suffix(".txt")
+        if potential_txt.exists():
+            try:
+                ref_text = _read_utf8_file(str(potential_txt), "Auto-detected reference text")
+                log.info("Auto-detected companion transcript: %s", potential_txt.name)
+            except Exception as e:
+                log.debug("Auto-detection failed for %s: %s", potential_txt, e)
 
     # ── Run pipeline ─────────────────────────────────────────────────────────
     pipeline = IndicF5Pipeline(
