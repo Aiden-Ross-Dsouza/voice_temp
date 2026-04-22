@@ -111,7 +111,7 @@ class AudioPreprocessor:
 
     TARGET_SR = 24_000          # IndicF5 native sample rate
     MIN_DURATION_SEC = 3.0
-    MAX_DURATION_SEC = 15.0
+    MAX_DURATION_SEC = 6.0      # MUST be short (~6s) so the model has room left to generate long text!
     SILENCE_THRESHOLD_DB = -40  # dB below which a frame is treated as silence
     TOP_DB = 40                 # librosa trim parameter
 
@@ -504,27 +504,29 @@ class IndicF5VoiceCloner:
 
         # Chunk the text to handle long generations and avoid truncation
         import re
-        # Split by Indic and English sentence terminators or newlines
-        parts = re.split(r'([।॥.!?\n]+)', target_text)
+        # Smart split: splits by terminators but keeps the terminator attached to the preceding text
+        sentences = re.split(r'(?<=[।॥.!?\n])\s+', target_text.strip())
         
         chunks = []
         current_chunk = ""
-        # 120 chars is safe for max generation length (~10-12 secs)
-        # combined with ref audio
+        # 120 chars is ideal when paired with a 5-6s reference audio
         MAX_CHUNK_LEN = 120 
         
-        for part in parts:
-            if not part:
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
                 continue
-            if len(current_chunk) + len(part) <= MAX_CHUNK_LEN:
-                current_chunk += part
-            else:
-                if current_chunk.strip():
-                    chunks.append(current_chunk.strip())
-                current_chunk = part
                 
-        if current_chunk.strip():
-            chunks.append(current_chunk.strip())
+            if not current_chunk:
+                current_chunk = sentence
+            elif len(current_chunk) + len(sentence) + 1 <= MAX_CHUNK_LEN:
+                current_chunk += " " + sentence
+            else:
+                chunks.append(current_chunk)
+                current_chunk = sentence
+                
+        if current_chunk:
+            chunks.append(current_chunk)
 
         audio_pieces = []
         log.info("  Split text into %d chunks to avoid model truncation.", len(chunks))
