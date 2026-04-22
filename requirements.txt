@@ -35,4 +35,8 @@ click>=8.1.0
 
 # Dataset Downloading
 datasets>=2.16.0
-pandas>=2.0.0
+pandas>=2.0.0
+
+# Recording & Noise reduction
+sounddevice>=0.4.6
+noisereduce>=3.0.0
