@@ -432,25 +432,6 @@ class IndicF5VoiceCloner:
             _tat.MelScale.__init__ = _safe_MelScale_init
             # ────────────────────────────────────────────────────────────────
 
-            # ── Prefix Stripping Patch ──────────────────────────────────────
-            # IndicF5 weights are saved with 'ema_model._orig_mod' prefixes.
-            # We patch load_state_dict to strip these on the fly during load.
-            import torch.nn as nn
-            _orig_load_state_dict = nn.Module.load_state_dict
-
-            def _patched_load_state_dict(module, state_dict, *args, **kwargs):
-                new_state_dict = {}
-                for k, v in state_dict.items():
-                    # Clean up common training prefixes
-                    new_k = k.replace("ema_model._orig_mod.", "")
-                    new_k = new_k.replace("_orig_mod.", "")
-                    new_k = new_k.replace("ema_model.", "")
-                    new_state_dict[new_k] = v
-                return _orig_load_state_dict(module, new_state_dict, *args, **kwargs)
-
-            nn.Module.load_state_dict = _patched_load_state_dict
-            # ────────────────────────────────────────────────────────────────
-
             self.model = AutoModel.from_pretrained(
                 self.MODEL_ID,
                 trust_remote_code=True,
@@ -458,9 +439,48 @@ class IndicF5VoiceCloner:
             )
 
             # Restore originals after loading
-            nn.Module.load_state_dict = _orig_load_state_dict
             _taf.melscale_fbanks  = _orig_melscale
             _tat.MelScale.__init__ = _orig_MelScale_init
+
+            # ── Weight Fixing Patch ──────────────────────────────────────────
+            # The official ai4bharat/IndicF5 weights were saved with `torch.compile` 
+            # and EMA prefixes, and some layer names (like GRN) changed from weight/bias 
+            # to gamma/beta. AutoModel completely ignores these layers and initializes 
+            # them with random noise! We must manually load and map them.
+            try:
+                import safetensors.torch
+                from huggingface_hub import hf_hub_download
+                
+                log.info("  Applying manual weight-mapping patch for IndicF5...")
+                model_file = hf_hub_download(repo_id=self.MODEL_ID, filename="model.safetensors", token=token)
+                state_dict = safetensors.torch.load_file(model_file)
+                
+                new_state_dict = {}
+                for k, v in state_dict.items():
+                    # 1. Strip the standard wrappers
+                    new_k = k.replace("ema_model._orig_mod.", "ema_model.")
+                    new_k = new_k.replace("_orig_mod.", "")
+                    
+                    # 2. Fix the name changes for GRN blocks
+                    if "grn" in new_k:
+                        new_k = new_k.replace(".weight", ".gamma").replace(".bias", ".beta")
+                        
+                    # 3. Fix the name changes for ConvNext LayerScale parameters
+                    if "convnext" in new_k and new_k.endswith(".weight") and "dwconv" not in new_k and "pwconv" not in new_k and "norm" not in new_k:
+                        new_k = new_k.replace(".weight", ".gamma")
+                        
+                    new_state_dict[new_k] = v
+                
+                # Apply the fixed weights
+                missing, unexpected = self.model.load_state_dict(new_state_dict, strict=False)
+                if not missing and not unexpected:
+                   log.info("  Successfully mapped and applied 100% of the weights!")
+                else:
+                   log.info("  Applied weight patch. Missing: %d, Unexpected: %d", len(missing), len(unexpected))
+                   
+            except Exception as e:
+                log.warning("  Failed to apply weight patch: %s", e)
+            # ────────────────────────────────────────────────────────────────
 
             # Re-patch now model.py is on disk (first-run download case)
             _patch_indicf5_model_py(cache_root=os.environ.get('HF_HOME'))
