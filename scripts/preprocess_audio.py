@@ -120,15 +120,22 @@ class AudioPreprocessor:
         
         return audio
     
-    def simple_noise_reduce(self, audio, strength=0.5):
+    def simple_noise_reduce(self, audio, strength=1.0):
         """Advanced noise reduction using noisereduce (or basic fallback)."""
-        print("🧹 Applying noise reduction...")
         
         try:
             import noisereduce as nr
-            return nr.reduce_noise(y=audio, sr=self.TARGET_SR, prop_decrease=0.8, stationary=True)
+            print(f"🧹 Applying advanced noise reduction (aggression: {strength})...")
+            # Using stationary=False is often more aggressive for complex backgrounds
+            return nr.reduce_noise(
+                y=audio, 
+                sr=self.TARGET_SR, 
+                prop_decrease=strength, 
+                stationary=False 
+            )
         except ImportError:
             print("   ⚠️  'noisereduce' package not found. Falling back to basic STFT method...")
+            print("🧹 Applying basic noise reduction...")
             # STFT
             D = librosa.stft(audio)
             magnitude = np.abs(D)
