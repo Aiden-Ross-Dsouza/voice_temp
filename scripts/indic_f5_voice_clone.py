@@ -193,24 +193,8 @@ class AudioPreprocessor:
             audio = audio * (target_peak / peak)
         return audio.astype(np.float32)
 
-    @staticmethod
-    def _clip_duration(audio: np.ndarray, sr: int, max_sec: float) -> np.ndarray:
-        """Clip to maximum duration, keeping the best (middle) portion for voice."""
-        max_samples = int(max_sec * sr)
-        if len(audio) <= max_samples:
-            return audio
-        # Keep middle segment — usually cleaner than start/end
-        mid = len(audio) // 2
-        half = max_samples // 2
-        start = max(0, mid - half)
-        end = start + max_samples
-        log.info(
-            "  Clipping audio to %.1f s (model max context)",
-            max_sec,
-        )
-        return audio[start:end]
-
-    @staticmethod
+    # Removed _clip_duration entirely. If we clip the reference audio, it will no 
+    # longer match the reference text provided by the user, which corrupts the F5-TTS alignment.
     def _optional_denoise(audio: np.ndarray, sr: int) -> np.ndarray:
         """Optional spectral-subtraction denoising via noisereduce."""
         try:
@@ -246,7 +230,6 @@ class AudioPreprocessor:
 
         audio = self._resample(audio, sr, self.TARGET_SR)
         audio = self._trim_silence(audio, self.TARGET_SR)
-        audio = self._clip_duration(audio, self.TARGET_SR, self.MAX_DURATION_SEC)
         audio = self._normalize(audio)
 
         duration = len(audio) / self.TARGET_SR
@@ -457,17 +440,19 @@ class IndicF5VoiceCloner:
                 
                 new_state_dict = {}
                 for k, v in state_dict.items():
-                    # 1. Strip the standard wrappers
-                    new_k = k.replace("ema_model._orig_mod.", "ema_model.")
-                    new_k = new_k.replace("_orig_mod.", "")
+                    new_k = k
                     
-                    # 2. Fix the name changes for GRN blocks
-                    if "grn" in new_k:
+                    # AI4Bharat GRN changes weight/bias -> gamma/beta
+                    if ".grn." in new_k:
                         new_k = new_k.replace(".weight", ".gamma").replace(".bias", ".beta")
                         
-                    # 3. Fix the name changes for ConvNext LayerScale parameters
+                    # AI4Bharat ConvNext changes specific weights -> gamma
                     if "convnext" in new_k and new_k.endswith(".weight") and "dwconv" not in new_k and "pwconv" not in new_k and "norm" not in new_k:
                         new_k = new_k.replace(".weight", ".gamma")
+                        
+                    # Remove ONLY the vocoder._orig_mod prefix, keep ema_model._orig_mod
+                    if new_k.startswith("vocoder._orig_mod."):
+                        new_k = new_k.replace("vocoder._orig_mod.", "vocoder.")
                         
                     new_state_dict[new_k] = v
                 
@@ -549,7 +534,8 @@ class IndicF5VoiceCloner:
         raw_parts = re.split(r'(?<=[।॥.!?\n])\s+', target_text.strip())
         
         # 2. Refine parts so no part is longer than MAX_CHUNK_LEN
-        MAX_CHUNK_LEN = 120 
+        # Lowered to 80 chars to compensate for longer 10-15s reference audios
+        MAX_CHUNK_LEN = 80 
         final_parts = []
         for part in raw_parts:
             if len(part) <= MAX_CHUNK_LEN:
