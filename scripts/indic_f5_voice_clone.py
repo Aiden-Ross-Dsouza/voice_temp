@@ -432,6 +432,25 @@ class IndicF5VoiceCloner:
             _tat.MelScale.__init__ = _safe_MelScale_init
             # ────────────────────────────────────────────────────────────────
 
+            # ── Prefix Stripping Patch ──────────────────────────────────────
+            # IndicF5 weights are saved with 'ema_model._orig_mod' prefixes.
+            # We patch load_state_dict to strip these on the fly during load.
+            import torch.nn as nn
+            _orig_load_state_dict = nn.Module.load_state_dict
+
+            def _patched_load_state_dict(module, state_dict, *args, **kwargs):
+                new_state_dict = {}
+                for k, v in state_dict.items():
+                    # Clean up common training prefixes
+                    new_k = k.replace("ema_model._orig_mod.", "")
+                    new_k = new_k.replace("_orig_mod.", "")
+                    new_k = new_k.replace("ema_model.", "")
+                    new_state_dict[new_k] = v
+                return _orig_load_state_dict(module, new_state_dict, *args, **kwargs)
+
+            nn.Module.load_state_dict = _patched_load_state_dict
+            # ────────────────────────────────────────────────────────────────
+
             self.model = AutoModel.from_pretrained(
                 self.MODEL_ID,
                 trust_remote_code=True,
@@ -439,6 +458,7 @@ class IndicF5VoiceCloner:
             )
 
             # Restore originals after loading
+            nn.Module.load_state_dict = _orig_load_state_dict
             _taf.melscale_fbanks  = _orig_melscale
             _tat.MelScale.__init__ = _orig_MelScale_init
 
@@ -504,27 +524,39 @@ class IndicF5VoiceCloner:
 
         # Chunk the text to handle long generations and avoid truncation
         import re
-        # Smart split: splits by terminators but keeps the terminator attached to the preceding text
-        sentences = re.split(r'(?<=[।॥.!?\n])\s+', target_text.strip())
         
+        # 1. Split into rough sentences/phrases
+        raw_parts = re.split(r'(?<=[।॥.!?\n])\s+', target_text.strip())
+        
+        # 2. Refine parts so no part is longer than MAX_CHUNK_LEN
+        MAX_CHUNK_LEN = 120 
+        final_parts = []
+        for part in raw_parts:
+            if len(part) <= MAX_CHUNK_LEN:
+                final_parts.append(part)
+            else:
+                # If a single sentence is too long, split by words
+                words = part.split(' ')
+                sub_chunk = ""
+                for word in words:
+                    if len(sub_chunk) + len(word) + 1 <= MAX_CHUNK_LEN:
+                        sub_chunk += (" " if sub_chunk else "") + word
+                    else:
+                        if sub_chunk: final_parts.append(sub_chunk)
+                        sub_chunk = word
+                if sub_chunk: final_parts.append(sub_chunk)
+
+        # 3. Group fragments back into optimal chunks
         chunks = []
         current_chunk = ""
-        # 120 chars is ideal when paired with a 5-6s reference audio
-        MAX_CHUNK_LEN = 120 
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-                
+        for part in final_parts:
             if not current_chunk:
-                current_chunk = sentence
-            elif len(current_chunk) + len(sentence) + 1 <= MAX_CHUNK_LEN:
-                current_chunk += " " + sentence
+                current_chunk = part
+            elif len(current_chunk) + len(part) + 1 <= MAX_CHUNK_LEN:
+                current_chunk += " " + part
             else:
                 chunks.append(current_chunk)
-                current_chunk = sentence
-                
+                current_chunk = part
         if current_chunk:
             chunks.append(current_chunk)
 
