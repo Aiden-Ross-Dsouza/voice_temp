@@ -121,29 +121,33 @@ class AudioPreprocessor:
         return audio
     
     def simple_noise_reduce(self, audio, strength=0.5):
-        """Basic spectral noise reduction."""
-        print("🧹 Applying basic noise reduction...")
+        """Advanced noise reduction using noisereduce (or basic fallback)."""
+        print("🧹 Applying noise reduction...")
         
-        # STFT
-        D = librosa.stft(audio)
-        magnitude = np.abs(D)
-        phase = np.angle(D)
-        
-        # Estimate noise floor
-        noise_floor = np.percentile(magnitude, 10, axis=1, keepdims=True)
-        
-        # Spectral gating
-        magnitude_clean = np.maximum(magnitude - strength * noise_floor, 0)
-        
-        # Reconstruct
-        D_clean = magnitude_clean * np.exp(1j * phase)
-        cleaned = librosa.istft(D_clean, length=len(audio))
-        
-        return cleaned
+        try:
+            import noisereduce as nr
+            return nr.reduce_noise(y=audio, sr=self.TARGET_SR, prop_decrease=0.8, stationary=True)
+        except ImportError:
+            print("   ⚠️  'noisereduce' package not found. Falling back to basic STFT method...")
+            # STFT
+            D = librosa.stft(audio)
+            magnitude = np.abs(D)
+            phase = np.angle(D)
+            
+            # Estimate noise floor
+            noise_floor = np.percentile(magnitude, 10, axis=1, keepdims=True)
+            
+            # Spectral gating
+            magnitude_clean = np.maximum(magnitude - strength * noise_floor, 0)
+            
+            # Reconstruct
+            D_clean = magnitude_clean * np.exp(1j * phase)
+            cleaned = librosa.istft(D_clean, length=len(audio))
+            return cleaned
     
     def preprocess(self, input_path, output_path=None, 
                    trim_silence=True, normalize=True,
-                   noise_reduce=False, max_duration=30):
+                   noise_reduce=True, max_duration=30):
         """Complete preprocessing pipeline."""
         print("\n" + "=" * 60)
         print("🎵 F5-TTS Audio Preprocessor")
@@ -221,8 +225,8 @@ Examples:
                         help='Disable silence trimming')
     parser.add_argument('--no-normalize', action='store_true', 
                         help='Disable normalization')
-    parser.add_argument('--noise-reduction', action='store_true', 
-                        help='Enable basic noise reduction')
+    parser.add_argument('--no-noise-reduction', action='store_true', 
+                        help='Disable noise reduction')
     parser.add_argument('--max-duration', type=int, default=30, 
                         help='Max duration in seconds (default: 30)')
     
@@ -235,7 +239,7 @@ Examples:
             output_path=args.output,
             trim_silence=not args.no_trim_silence,
             normalize=not args.no_normalize,
-            noise_reduce=args.noise_reduction,
+            noise_reduce=not args.no_noise_reduction,
             max_duration=args.max_duration
         )
         print(f"🎯 Ready for F5-TTS: {output}")
