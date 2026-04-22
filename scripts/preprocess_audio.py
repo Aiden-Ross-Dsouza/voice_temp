@@ -121,36 +121,56 @@ class AudioPreprocessor:
         return audio
     
     def simple_noise_reduce(self, audio, strength=1.0):
-        """Advanced noise reduction using noisereduce (or basic fallback)."""
+        """Advanced noise reduction using DeepFilterNet (AI) or noisereduce."""
+        # Note: audio comes in as a numpy array at self.TARGET_SR
         
         try:
-            import noisereduce as nr
-            print(f"🧹 Applying advanced noise reduction (aggression: {strength})...")
-            # Using stationary=False is often more aggressive for complex backgrounds
-            return nr.reduce_noise(
-                y=audio, 
-                sr=self.TARGET_SR, 
-                prop_decrease=strength, 
-                stationary=False 
-            )
+            # 1. First try DeepFilterNet (State-of-the-art AI denoising)
+            from df.enhance import enhance, init_df
+            import torch
+            print("🤖 Applying AI noise reduction (DeepFilterNet)...")
+            
+            # DeepFilterNet requires specific tensor format and its own sample rate
+            model, df_state, _ = init_df()
+            
+            # Convert numpy to torch tensor, add batch channel [1, samples]
+            audio_tensor = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
+            
+            # Resample strictly for DeepFilterNet
+            if self.TARGET_SR != df_state.sr():
+                import torchaudio.functional as F
+                audio_tensor = F.resample(audio_tensor, self.TARGET_SR, df_state.sr())
+                
+            enhanced = enhance(model, df_state, audio_tensor)
+            
+            # Resample back to our target SR
+            if self.TARGET_SR != df_state.sr():
+                enhanced = F.resample(enhanced, df_state.sr(), self.TARGET_SR)
+                
+            return enhanced.squeeze().numpy()
+            
         except ImportError:
-            print("   ⚠️  'noisereduce' package not found. Falling back to basic STFT method...")
-            print("🧹 Applying basic noise reduction...")
-            # STFT
-            D = librosa.stft(audio)
-            magnitude = np.abs(D)
-            phase = np.angle(D)
-            
-            # Estimate noise floor
-            noise_floor = np.percentile(magnitude, 10, axis=1, keepdims=True)
-            
-            # Spectral gating
-            magnitude_clean = np.maximum(magnitude - strength * noise_floor, 0)
-            
-            # Reconstruct
-            D_clean = magnitude_clean * np.exp(1j * phase)
-            cleaned = librosa.istft(D_clean, length=len(audio))
-            return cleaned
+            try:
+                # 2. Fallback to noisereduce
+                import noisereduce as nr
+                print(f"🧹 Applying advanced noise reduction (aggression: {strength})...")
+                print("   💡 For much better AI denoising, install: pip install deepfilternet")
+                return nr.reduce_noise(
+                    y=audio, 
+                    sr=self.TARGET_SR, 
+                    prop_decrease=strength, 
+                    stationary=False 
+                )
+            except ImportError:
+                print("   ⚠️  No noise removal packages found. Falling back to basic STFT...")
+                print("🧹 Applying basic noise reduction...")
+                D = librosa.stft(audio)
+                magnitude = np.abs(D)
+                phase = np.angle(D)
+                noise_floor = np.percentile(magnitude, 10, axis=1, keepdims=True)
+                magnitude_clean = np.maximum(magnitude - strength * noise_floor, 0)
+                D_clean = magnitude_clean * np.exp(1j * phase)
+                return librosa.istft(D_clean, length=len(audio))
     
     def preprocess(self, input_path, output_path=None, 
                    trim_silence=True, normalize=True,
